@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 # Dictionary to store filters {trigger_word: {'text': response, 'buttons': []}}
 filters_dict = {}
+# Track which users are currently setting up buttons
+button_setup_mode = {}
 
 # Command handlers
 def start(update, context):
@@ -37,6 +39,10 @@ def add_filter(update, context):
     response = reply.text
     filters_dict[trigger] = {'text': response, 'buttons': []}
     
+    # Set user in button setup mode
+    user_id = update.message.from_user.id
+    button_setup_mode[user_id] = trigger
+    
     # Ask for button information
     update.message.reply_text(
         f'✅ Filter "{trigger}" added successfully!\n\n'
@@ -48,11 +54,44 @@ def add_filter(update, context):
         'Send "done" when finished adding buttons.'
     )
 
+def handle_message(update, context):
+    """Check messages for triggers and respond accordingly"""
+    user_id = update.message.from_user.id
+    
+    # Check if user is in button setup mode
+    if user_id in button_setup_mode:
+        handle_button_info(update, context)
+        return
+    
+    message_text = update.message.text.lower()
+    
+    # Check if any trigger word exists in the message
+    for trigger, filter_data in filters_dict.items():
+        if re.search(r'\b' + re.escape(trigger) + r'\b', message_text):
+            # Create inline keyboard if buttons exist
+            if filter_data['buttons']:
+                keyboard = []
+                for button in filter_data['buttons']:
+                    keyboard.append([InlineKeyboardButton(button['text'], url=button['url'])])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                update.message.reply_text(filter_data['text'], reply_markup=reply_markup)
+            else:
+                update.message.reply_text(filter_data['text'])
+            break  # Only respond to the first match
+
 def handle_button_info(update, context):
     """Handle button information input"""
+    user_id = update.message.from_user.id
     message_text = update.message.text.strip()
     
+    if user_id not in button_setup_mode:
+        return
+    
+    trigger = button_setup_mode[user_id]
+    
     if message_text.lower() == 'done':
+        del button_setup_mode[user_id]
         update.message.reply_text('Button setup completed!')
         return
     
@@ -65,17 +104,13 @@ def handle_button_info(update, context):
     button_name = button_name.strip()
     button_url = button_url.strip()
     
-    # Find which filter we're adding buttons to (the most recently added one)
-    if not filters_dict:
-        update.message.reply_text('No filters found. Please add a filter first with /filterr')
-        return
-    
-    # Add button to the most recent filter
-    for trigger in filters_dict:
+    # Add button to the filter
+    if trigger in filters_dict:
         filters_dict[trigger]['buttons'].append({'text': button_name, 'url': button_url})
-        break  # Only add to the first filter (most recent)
-    
-    update.message.reply_text(f'✅ Button "{button_name}" added! Send more buttons or "done" to finish.')
+        update.message.reply_text(f'✅ Button "{button_name}" added! Send more buttons or "done" to finish.')
+    else:
+        update.message.reply_text('Error: Filter not found. Please start over with /filterr')
+        del button_setup_mode[user_id]
 
 def stop_all(update, context):
     """Remove all filters"""
@@ -94,27 +129,12 @@ def list_filters(update, context):
         update.message.reply_text('No active filters!')
         return
     
-    filters_list = "\n".join([f"• {trigger}" for trigger in filters_dict.keys()])
-    update.message.reply_text(f"Active filters:\n{filters_list}")
-
-def handle_message(update, context):
-    """Check messages for triggers and respond accordingly"""
-    message_text = update.message.text.lower()
+    filters_list = []
+    for trigger, data in filters_dict.items():
+        button_count = len(data['buttons'])
+        filters_list.append(f"• {trigger} ({button_count} buttons)")
     
-    # Check if any trigger word exists in the message
-    for trigger, filter_data in filters_dict.items():
-        if re.search(r'\b' + re.escape(trigger) + r'\b', message_text):
-            # Create inline keyboard if buttons exist
-            if filter_data['buttons']:
-                keyboard = []
-                for button in filter_data['buttons']:
-                    keyboard.append([InlineKeyboardButton(button['text'], url=button['url'])])
-                
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                update.message.reply_text(filter_data['text'], reply_markup=reply_markup)
-            else:
-                update.message.reply_text(filter_data['text'])
-            break  # Only respond to the first match
+    update.message.reply_text(f"Active filters:\n" + "\n".join(filters_list))
 
 def error(update, context):
     """Log Errors caused by Updates."""
@@ -155,11 +175,8 @@ def run_bot():
     dp.add_handler(CommandHandler("stopalll", stop_all))
     dp.add_handler(CommandHandler("list", list_filters))
 
-    # Add message handler for regular messages
+    # Add message handler for all text messages
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    
-    # Add message handler for button information
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_button_info))
 
     # Log all errors
     dp.add_error_handler(error)
