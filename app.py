@@ -55,14 +55,20 @@ def add_filter(update, context):
     )
 
 def handle_message(update, context):
-    """Check messages for triggers and respond accordingly"""
+    """Handle all incoming messages"""
     user_id = update.message.from_user.id
+    message_text = update.message.text
     
     # Check if user is in button setup mode
     if user_id in button_setup_mode:
         handle_button_info(update, context)
         return
     
+    # If not in button setup mode, check for trigger words
+    check_triggers(update, context)
+
+def check_triggers(update, context):
+    """Check messages for triggers and respond accordingly"""
     message_text = update.message.text.lower()
     
     # Check if any trigger word exists in the message
@@ -121,6 +127,8 @@ def stop_all(update, context):
     
     count = len(filters_dict)
     filters_dict = {}
+    # Also clear button setup mode
+    button_setup_mode.clear()
     update.message.reply_text(f'🗑️ Removed all {count} filters!')
 
 def list_filters(update, context):
